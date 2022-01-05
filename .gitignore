@@ -1,0 +1,7 @@
+*.exe
+*.out
+*.pdb
+callgrind*
+*.txt
+.vscode
+*.ilk
