@@ -37,3 +37,9 @@ https://peterellisjones.com/posts/generating-legal-chess-moves-efficiently/
 
 ## Perft test positions
 https://www.chessprogramming.net/perfect-perft/
+
+## Negamax algorithm
+https://en.wikipedia.org/wiki/Negamax
+
+## Zobrist hashing & Opening book
+http://hgm.nubati.net/book_format.html

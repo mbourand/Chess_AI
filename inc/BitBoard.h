@@ -149,12 +149,12 @@ class BitBoard
         // 512 because the maximum amount of relevant squares for a bishop is 9, so that makes 2^9 = 512 possible keys
         std::vector<std::vector<uint64_t>> bishop_moves;
     
-    protected:
         std::array<std::array<uint64_t, 7>, 2> m_bitboards;
         std::array<uint8_t, 64> m_pieces;
         uint8_t m_player_to_move;
         uint8_t m_castling_rights;
         uint8_t m_en_passant_square;
+        uint8_t m_last_move_to;
 
         bool m_check;
 
@@ -170,12 +170,13 @@ class BitBoard
         uint64_t squareAttackers(uint8_t square, uint8_t attacker_color) const;
         uint64_t create_ray(uint8_t from, uint8_t to) const;
 
-        std::list<uint16_t> get_moves(uint8_t color) const;
+        std::vector<uint16_t> get_moves(uint8_t color) const;
         uint64_t get_bishop_moves(uint8_t square, uint64_t blockers) const;
         uint64_t get_rook_moves(uint8_t square, uint64_t blockers) const;
         uint64_t get_pawn_moves(uint8_t square) const;
         uint8_t player_to_move() const;
         bool isSquareAttacked(uint8_t square, uint8_t attacker_color) const;
+        bool isCapture(uint16_t move) const;
         uint64_t xrayRookAttacks(uint64_t blockers, uint8_t square) const;
         uint64_t xrayBishopAttacks(uint64_t blockers, uint8_t square) const;
         uint64_t get_attack_mask(uint8_t color) const;
