@@ -26,9 +26,8 @@ OpeningBook::OpeningBook(const std::string& filename)
         if (weight != 0 && move != 0)
         {
             uint16_t formatted_move = 0;
-            formatted_move |= (7 - ((move >> 3) & 0b111) / 8) * 8 + ((move & 0b111) % 8);
-            formatted_move |= ((7 - ((move >> 9) & 0b111) / 8) * 8 + (((move >> 6) & 0b111) % 8) << 6);
-
+            formatted_move |= (7 - ((move >> 3) & 0b111)) * 8 + ((move & 0b111) % 8);
+            formatted_move |= ((7 - ((move >> 9) & 0b111)) * 8 + (((move >> 6) & 0b111) % 8)) << 6;
             uint8_t promotion = (move >> 12) & 0b111;
             switch (promotion)
             {
@@ -72,18 +71,5 @@ uint16_t OpeningBook::getMove(uint64_t key) const
         return 0;
     }
     auto& moves = it->second;
-
-    uint32_t total = 0;
-    for (auto& move : moves)
-        total += move.weight;
-
-    uint32_t r = rand() % total;
-    for (auto& move : moves)
-    {
-        r -= move.weight;
-        if (r < 0)
-            return move.move;
-    }
-
-    return 0;
+    return moves[rand() % moves.size()].move;
 }

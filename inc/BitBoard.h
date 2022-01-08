@@ -171,6 +171,7 @@ class BitBoard
         uint64_t create_ray(uint8_t from, uint8_t to) const;
 
         std::vector<uint16_t> get_moves(uint8_t color) const;
+        std::vector<uint16_t> get_capture_moves(uint8_t color) const;
         uint64_t get_bishop_moves(uint8_t square, uint64_t blockers) const;
         uint64_t get_rook_moves(uint8_t square, uint64_t blockers) const;
         uint64_t get_pawn_moves(uint8_t square) const;

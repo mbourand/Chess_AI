@@ -212,26 +212,26 @@ constexpr std::array<uint64_t, 781> ZOBRIST_KEYS = {
 
 constexpr int PAWN_VALUE = 100;
 constexpr int KNIGHT_VALUE = 310;
-constexpr int BISHOP_VALUE = 330;
+constexpr int BISHOP_VALUE = 340;
 constexpr int ROOK_VALUE = 500;
 constexpr int QUEEN_VALUE = 900;
+constexpr int KING_VALUE = 20000;
 
-constexpr std::array<int, 6> PIECE_VALUES = {
-    {
-        0,
-        PAWN_VALUE,
-        KNIGHT_VALUE,
-        BISHOP_VALUE,
-        ROOK_VALUE,
-        QUEEN_VALUE
-    }
+constexpr std::array<int, 7> PIECE_VALUES = {
+    0,
+    PAWN_VALUE,
+    KNIGHT_VALUE,
+    BISHOP_VALUE,
+    ROOK_VALUE,
+    QUEEN_VALUE,
+    KING_VALUE
 };
 
 constexpr int KING_SAFETY_VALUE = 20;
 constexpr int BISHOP_PAIR_VALUE = 20;
 constexpr int CENTER_CONTROL_VALUE = 15;
-constexpr int DOUBLE_PAWN_VALUE = -20;
-constexpr int ISOLATED_PAWN_VALUE = -30;
+constexpr int DOUBLE_PAWN_VALUE = -15;
+constexpr int ISOLATED_PAWN_VALUE = -15;
 
 constexpr uint64_t CENTER_MASK = 0x3c3c3c3c0000;
 
@@ -316,11 +316,30 @@ constexpr std::array<std::array<int, 64>, 7> PIECE_TABLES = {
     PAWN_TABLE, KNIGHT_TABLE, BISHOP_TABLE, ROOK_TABLE, QUEEN_TABLE, KING_TABLE_MIDDLEGAME, KING_TABLE_ENDGAME
 };
 
+enum TranspositionTableNodeType
+{
+    EXACT,
+    UPPERBOUND,
+    LOWERBOUND
+};
+
+struct TranspositionTableData
+{
+    uint16_t move;
+    uint8_t depth;
+    int score;
+    TranspositionTableNodeType type;
+    uint16_t age;
+};
+
 class Computer
 {
     public:
         uint8_t m_depth;
         OpeningBook m_openingBook;
+        std::unordered_map<uint64_t, TranspositionTableData> m_transpositionTable;
+        std::size_t m_transpositionTableSize;
+        uint64_t m_timeToPlay;
 
         Computer();
         Computer(const Computer& other);
@@ -328,11 +347,14 @@ class Computer
         Computer& operator=(const Computer& other);
 
         int evaluate(const BitBoard& board) const;
-        uint16_t getBestMove(BitBoard& board) const;
+        uint16_t getBestMove(BitBoard& board);
         uint64_t hash(const BitBoard& board) const;
 
     private:
-        std::pair<int, uint16_t> negamax(BitBoard& board, uint8_t depth, int alpha, int beta, int8_t color) const;
+        std::pair<int, uint16_t> negamax(BitBoard& board, uint8_t depth, int alpha, int beta, int8_t color);
+        std::pair<int, uint16_t> quiescence(BitBoard& board, int alpha, int beta, int8_t color);
+
 };
 
 #endif
+

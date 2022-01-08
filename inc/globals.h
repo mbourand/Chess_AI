@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <fstream>
 #include <ctime>
+#include <chrono>
 
 uint64_t invert_bits(uint64_t bits);
 uint64_t invert_bytes(uint64_t bits);

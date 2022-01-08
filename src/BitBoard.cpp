@@ -124,6 +124,8 @@ uint8_t BitBoard::player_to_move() const
 uint64_t BitBoard::movePiece(int8_t from, int8_t to, uint8_t promotion_piece)
 {
     uint8_t piece = at(from);
+    if (piece == KING && std::abs(from - to) == 3) // Opening book castle
+        to += (to % 8 == 0 ? 2 : -1);
     uint8_t color = m_bitboards[WHITE][ALL] & (1ULL << from) ? WHITE : BLACK;
     uint8_t captured_pos = (piece == PAWN && to == m_en_passant_square) ? (m_en_passant_square + (color == WHITE ? 8 : -8)) : to;
     uint8_t captured = at(captured_pos);
@@ -187,20 +189,144 @@ uint64_t BitBoard::movePiece(int8_t from, int8_t to, uint8_t promotion_piece)
     else
         m_en_passant_square = -1;
 
-    m_player_to_move = !color;
+    m_player_to_move = !m_player_to_move;
 
     m_last_move_to = to;
     return encodedMove;
 }
 
+std::vector<uint16_t> BitBoard::get_capture_moves(uint8_t color) const
+{
+    uint64_t all_pieces = allPieces();
+    std::vector<uint16_t> moves;
+    moves.reserve(10);
+
+    uint8_t king_square = __builtin_ctzll(m_bitboards[color][KING]);
+    uint64_t checkers = squareAttackers(king_square, !color);
+    uint8_t num_checkers = countBits(checkers);
+
+    uint64_t attack_mask = get_attack_mask(!color);
+    uint64_t check_resolve_capture_mask = 0xFFFFFFFFFFFFFFFFULL;
+    uint64_t check_resolve_push_mask = 0xFFFFFFFFFFFFFFFFULL;
+    check_resolve_capture_mask = checkers;
+
+    uint64_t pinned = 0;
+    uint64_t pinners = xrayRookAttacks(m_bitboards[color][ALL], king_square) & (m_bitboards[!color][ROOK] | m_bitboards[!color][QUEEN]);
+    uint64_t tmpPinners = pinners;
+    while (tmpPinners)
+    {
+        uint8_t square = __builtin_ctzll(tmpPinners);
+        tmpPinners &= tmpPinners - 1;
+        pinned |= create_ray(square, king_square) & m_bitboards[color][ALL];
+    }
+    tmpPinners = xrayBishopAttacks(m_bitboards[color][ALL], king_square) & (m_bitboards[!color][BISHOP] | m_bitboards[!color][QUEEN]);
+    pinners |= tmpPinners;
+    while (tmpPinners)
+    {
+        uint8_t square = __builtin_ctzll(tmpPinners);
+        tmpPinners &= tmpPinners - 1;
+        pinned |= create_ray(square, king_square) & m_bitboards[color][ALL];
+    }
+
+    if (checkers)
+    {
+        uint8_t checker_square = __builtin_ctzll(checkers);
+        uint8_t checker_piece = at(checker_square);
+        if (checker_piece == BISHOP || checker_piece == ROOK || checker_piece == QUEEN)
+            check_resolve_push_mask = create_ray(king_square, checker_square) & ~(m_bitboards[color][ALL]);
+        else
+            check_resolve_push_mask = 0;
+    }
+
+    for (size_t piece_type = (num_checkers > 1 ? KING : 1); piece_type < m_bitboards[color].size(); piece_type++)
+    {
+        uint64_t pieces = m_bitboards[color][piece_type];
+        while (pieces)
+        {
+            uint8_t square = __builtin_ctzll(pieces);
+            pieces &= pieces - 1;
+
+            uint64_t moveBoard = 0;
+            switch (piece_type)
+            {
+            case PAWN:
+                moveBoard = get_pawn_moves(square);
+                break;
+            case KNIGHT:
+                moveBoard = KNIGHT_MOVES[square] & ~(m_bitboards[color][ALL]);
+                break;
+            case KING:
+                moveBoard = KING_MOVES[square] & ~(m_bitboards[color][ALL]);
+                break;
+            case BISHOP:
+                moveBoard = get_bishop_moves(square, all_pieces) & ~(m_bitboards[color][ALL]);
+                break;
+            case ROOK:
+                moveBoard = get_rook_moves(square, all_pieces) & ~(m_bitboards[color][ALL]);
+                break;
+            case QUEEN:
+                moveBoard = (get_rook_moves(square, all_pieces) | get_bishop_moves(square, all_pieces)) & ~(m_bitboards[color][ALL]);
+                break;
+            }
+
+            if (pinned & (1ULL << square) && piece_type != KING)
+            {
+                if (piece_type == KNIGHT)
+                    moveBoard = 0;
+                else
+                {
+                    uint64_t pinner = pinners;
+                    while (pinner)
+                    {
+                        uint8_t pinner_square = __builtin_ctzll(pinner);
+                        pinner &= pinner - 1;
+                        uint64_t ray = create_ray(king_square, pinner_square);
+                        if (ray & (1ULL << square))
+                        {
+                            moveBoard &= ray;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (piece_type != KING)
+                moveBoard &= (check_resolve_capture_mask | check_resolve_push_mask | (piece_type == PAWN && m_en_passant_square != 255 ? (1ULL << m_en_passant_square) : 0));
+            else
+                moveBoard &= ~(attack_mask);
+            
+            // Captures only
+            moveBoard &= (m_bitboards[!color][ALL] | (piece_type == PAWN && m_en_passant_square != 255 ? (1ULL << m_en_passant_square) : 0));
+
+            while (moveBoard)
+            {
+                uint8_t to = __builtin_ctzll(moveBoard);
+                if (piece_type == PAWN && ((1ULL << to) & (ROW_1 | ROW_8)))
+                {
+                    moves.push_back(to | ((square & 0b111111) << 6) | (QUEEN << 12));
+                    moves.push_back(to | ((square & 0b111111) << 6) | (KNIGHT << 12));
+                    moves.push_back(to | ((square & 0b111111) << 6) | (ROOK << 12));
+                    moves.push_back(to | ((square & 0b111111) << 6) | (BISHOP << 12));
+                    moveBoard &= moveBoard - 1;
+                    continue;
+                }
+                moveBoard &= moveBoard - 1;
+                moves.push_back(to | ((square & 0b111111) << 6));
+            }
+        }
+    }
+
+    return moves;
+}
+
 void BitBoard::undoMove(uint64_t move)
 {
     int8_t to = move & 0b111111;
+    uint8_t piece = at(to);
     int8_t from = (move >> 6) & 0b111111;
     uint8_t captured = (move >> 12) & 0b111;
     uint8_t captured_color = (move >> 15) & 0b1;
     uint8_t captured_pos = (move >> 16) & 0b111111;
-    uint8_t piece = at(to);
     uint8_t color = colorBoard(WHITE) & (1ULL << to) ? WHITE : BLACK;
     uint8_t old_piece = (move >> 34) & 0b111;
 
@@ -238,7 +364,7 @@ void BitBoard::undoMove(uint64_t move)
     m_bitboards[color][ALL] ^= (1ULL << to);
     m_bitboards[color][piece] ^= (1ULL << to);
     setPiece(color, old_piece, from);
-    m_player_to_move = !color;
+    m_player_to_move = !m_player_to_move;
 }
 
 bool BitBoard::isCorrupted() const
@@ -516,7 +642,7 @@ std::vector<uint16_t> BitBoard::get_moves(uint8_t color) const
             }
 
             if (piece_type != KING)
-                moveBoard &= (check_resolve_capture_mask | check_resolve_push_mask | (piece_type == PAWN ? (1ULL << m_en_passant_square) : 0));
+                moveBoard &= (check_resolve_capture_mask | check_resolve_push_mask | (piece_type == PAWN && m_en_passant_square != 255 ? (1ULL << m_en_passant_square) : 0));
             else
                 moveBoard &= ~(attack_mask);
 
@@ -581,7 +707,7 @@ uint64_t BitBoard::get_pawn_moves(uint8_t square) const
             moves |= (1ULL << (square - 8 - 1));
         if (file < 7 && (colorBoard(BLACK) & (1ULL << (square - 8 + 1)) || m_en_passant_square == square - 8 + 1))
             moves |= (1ULL << (square - 8 + 1));
-        if (moves & (1ULL << m_en_passant_square))
+        if (m_en_passant_square != 255 && (moves & (1ULL << m_en_passant_square)))
         {
             uint64_t blockers = all_pieces & ~((1ULL << square) | (1ULL << (m_en_passant_square + 8)));
             if ((get_rook_moves(__builtin_ctzll(m_bitboards[color][KING]), blockers) & (m_bitboards[!color][ROOK] | m_bitboards[!color][QUEEN]))
@@ -600,7 +726,7 @@ uint64_t BitBoard::get_pawn_moves(uint8_t square) const
             moves |= (1ULL << (square + 8 - 1));
         if (file < 7 && (colorBoard(WHITE) & (1ULL << (square + 8 + 1)) || m_en_passant_square == square + 8 + 1))
             moves |= (1ULL << (square + 8 + 1));
-        if (moves & (1ULL << m_en_passant_square))
+        if (m_en_passant_square != 255 && (moves & (1ULL << m_en_passant_square)))
         {
             uint64_t blockers = all_pieces & ~((1ULL << square) | (1ULL << (m_en_passant_square - 8)));
             if ((get_rook_moves(__builtin_ctzll(m_bitboards[color][KING]), blockers) & (m_bitboards[!color][ROOK] | m_bitboards[!color][QUEEN]))
@@ -757,9 +883,9 @@ bool BitBoard::isSquareAttacked(uint8_t square, uint8_t attacker_color) const
         return true;
     if (KING_MOVES[square] & m_bitboards[attacker_color][KING])
         return true;
-    if (get_bishop_moves(square, all_pieces) & m_bitboards[attacker_color][KING])
+    if (get_bishop_moves(square, all_pieces) & m_bitboards[attacker_color][BISHOP])
         return true;
-    if (get_rook_moves(square, all_pieces) & m_bitboards[attacker_color][KING])
+    if (get_rook_moves(square, all_pieces) & m_bitboards[attacker_color][ROOK])
         return true;
     return false;
 }

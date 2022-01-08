@@ -25,7 +25,7 @@ int64_t perft_count(BitBoard& bitBoard, int depth)
 int64_t perft(BitBoard& bitBoard, int depth)
 {
     int total = 0;
-    auto moves = bitBoard.get_moves(bitBoard.player_to_move());
+    auto moves = bitBoard.get_capture_moves(bitBoard.player_to_move());
     for (auto move : moves)
     {
         uint64_t encodedMove = bitBoard.movePiece((move >> 6) & 0b111111, move & 0b111111, move >> 12);
@@ -70,7 +70,7 @@ void print_all_moves_possible(BitBoard& bitBoard)
 
 void evaluationTest()
 {
-    BitBoard bitboard("rnbqkbnr/pppppppp/8/8/8/N7/PPPPPPPP/R1BQKBNR b KQkq - 0 1");
+    BitBoard bitboard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     Computer computer;
 
     std::cout << "Evaluation: " << computer.evaluate(bitboard) << std::endl;
@@ -80,7 +80,7 @@ void computer_play()
 {
     srand(time(NULL));
     BitBoard bitboard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    Computer computer(7, "./komodo.bin");
+    Computer computer(6, "./komodo.bin");
 
     while (true)
     {
@@ -88,31 +88,38 @@ void computer_play()
         std::cout << "Best move: " << move << std::endl;
         bitboard.movePiece(move >> 6, move & 0b111111, move >> 12);
         std::cout << bitboard;
-        std::string line;
-        std::getline(std::cin, line);
-        int from_x = line[0] - 'a';
-        int from_y = 8 - (line[1] - '0');
-        int to_x = line[2] - 'a';
-        int to_y = 8 - (line[3] - '0');
+        int from_x = 0;
+        int from_y = 0;
+        int to_x = 0;
+        int to_y = 0;
         int promotion = 0;
-        if (line.size() == 5)
-        {
-            switch (line[4])
+        do {
+            std::string line;
+            std::getline(std::cin, line);
+            from_x = line[0] - 'a';
+            from_y = 8 - (line[1] - '0');
+            to_x = line[2] - 'a';
+            to_y = 8 - (line[3] - '0');
+            promotion = 0;
+            if (line.size() == 5)
             {
-                case 'n':
-                    promotion = 2;
-                    break;
-                case 'b':
-                    promotion = 3;
-                    break;
-                case 'r':
-                    promotion = 4;
-                    break;
-                case 'q':
-                    promotion = 5;
-                    break;
+                switch (line[4])
+                {
+                    case 'n':
+                        promotion = 2;
+                        break;
+                    case 'b':
+                        promotion = 3;
+                        break;
+                    case 'r':
+                        promotion = 4;
+                        break;
+                    case 'q':
+                        promotion = 5;
+                        break;
+                }
             }
-        }
+        } while (!bitboard.occupied(from_x + from_y * 8));
         bitboard.movePiece(from_y * 8 + from_x, to_y * 8 + to_x, promotion);
         std::cout << bitboard;
     }

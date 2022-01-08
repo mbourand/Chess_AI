@@ -3,12 +3,16 @@
 Computer::Computer()
 {
     m_depth = 6;
+    m_transpositionTableSize = 1000000000;
+    m_timeToPlay = 1 * 1000;
 }
 
 Computer::Computer(uint8_t depth, const std::string& openingBook)
 {
-    m_depth = 6;
+    m_depth = depth;
     m_openingBook = OpeningBook(openingBook);
+    m_transpositionTableSize = 1000000000;
+    m_timeToPlay = 1 * 1000;
 }
 
 Computer::Computer(const Computer& other)
@@ -20,6 +24,9 @@ Computer& Computer::operator=(const Computer& other)
 {
     m_depth = other.m_depth;
     m_openingBook = other.m_openingBook;
+    m_transpositionTable = other.m_transpositionTable;
+    m_transpositionTableSize = other.m_transpositionTableSize;
+    m_timeToPlay = other.m_timeToPlay;
     return *this;
 }
 
@@ -83,33 +90,28 @@ int Computer::evaluate(const BitBoard& board) const
 {
     int score = 0;
 
-    // Material advantage
-    score = (countBits(board.m_bitboards[WHITE][PAWN]) - countBits(board.m_bitboards[BLACK][PAWN])) * PAWN_VALUE;
-    score += (countBits(board.m_bitboards[WHITE][KNIGHT]) - countBits(board.m_bitboards[BLACK][KNIGHT])) * KNIGHT_VALUE;
-    score += (countBits(board.m_bitboards[WHITE][BISHOP]) - countBits(board.m_bitboards[BLACK][BISHOP])) * BISHOP_VALUE;
-    score += (countBits(board.m_bitboards[WHITE][ROOK]) - countBits(board.m_bitboards[BLACK][ROOK])) * ROOK_VALUE;
-    score += (countBits(board.m_bitboards[WHITE][QUEEN]) - countBits(board.m_bitboards[BLACK][QUEEN])) * QUEEN_VALUE;
-
-    // Activity
-    score += (countBits(board.get_attack_mask(WHITE)) - countBits(board.get_attack_mask(BLACK))) * 10;
-
-    // Piece squares
+    // Piece squares & Material advantage
     for (uint8_t i = 0; i < 64; i++)
     {
         if (board.m_bitboards[WHITE][0] & (1ULL << i))
-            score += PIECE_TABLES[board.m_pieces[i] - 1][i];
+            score += PIECE_TABLES[board.m_pieces[i] - 1][i] + PIECE_VALUES[board.m_pieces[i]];
         else if (board.m_bitboards[BLACK][0] & (1ULL << i))
-            score -= PIECE_TABLES[board.m_pieces[i] - 1][(7 - i / 8) * 8 + (i % 8)];
+            score -= PIECE_TABLES[board.m_pieces[i] - 1][(7 - i / 8) * 8 + (i % 8)] + PIECE_VALUES[board.m_pieces[i]];
     }
+
+    // Remove king table if during finals
+    uint8_t bk_square = __builtin_ctzll(board.m_bitboards[BLACK][KING]);
+    if ((board.m_bitboards[WHITE][QUEEN] | board.m_bitboards[BLACK][QUEEN]) == 0 && countBits(board.m_bitboards[!WHITE][ALL] & ~(board.m_bitboards[WHITE][PAWN]) <= 2) && countBits(board.m_bitboards[!BLACK][ALL] & ~(board.m_bitboards[BLACK][PAWN]) <= 2))
+        score += -PIECE_TABLES[KING][__builtin_ctzll(board.m_bitboards[WHITE][KING])] + -PIECE_TABLES[KING][(7 - bk_square / 8) * 8 + (bk_square % 8)];
 
     // Doubled pawns
     for (uint8_t i = 0; i < 8; i++)
         score += (std::max(0, static_cast<int8_t>((countBits(board.m_bitboards[WHITE][PAWN]) & FILES[i])) - 1) - std::max(0, static_cast<int8_t>((countBits(board.m_bitboards[BLACK][PAWN])) & FILES[i]) - 1)) * DOUBLE_PAWN_VALUE;
 
     // Isolated pawns
-    for (uint8_t i = 0; i < 8; i++)
+    for (uint8_t i = 1; i < 7; i++)
     {
-        uint64_t adjacent_mask = (i == 7 ? 0 : FILES[i + 1]) | (i == 0 ? 0 : FILES[i - 1]);
+        uint64_t adjacent_mask = FILES[i + 1] | FILES[i - 1];
         if ((board.m_bitboards[WHITE][PAWN] & FILES[i]) && !(board.m_bitboards[WHITE][PAWN] & adjacent_mask))
             score += ISOLATED_PAWN_VALUE;
         if ((board.m_bitboards[BLACK][PAWN] & FILES[i]) && !(board.m_bitboards[BLACK][PAWN] & adjacent_mask))
@@ -119,18 +121,97 @@ int Computer::evaluate(const BitBoard& board) const
     return score;
 }
 
-std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int alpha, int beta, int8_t color) const
+std::pair<int, uint16_t> Computer::quiescence(BitBoard& board, int alpha, int beta, int8_t color)
 {
-    if (depth == 0)
+    int stand_pat = color * evaluate(board);
+    if (stand_pat >= beta)
+        return std::make_pair(beta, 0);
+    if (stand_pat >= alpha)
+        alpha = stand_pat;
+
+    uint8_t player_to_move = board.player_to_move();
+    std::vector<uint16_t> moves = board.get_capture_moves(player_to_move);
+    
+    if (moves.size() == 0)
         return std::make_pair(color * evaluate(board), 0);
+
+    std::sort(moves.begin(), moves.end(), [&board, player_to_move, this](uint16_t a, uint16_t b) {
+        int16_t score = 0;
+        int8_t a_to = a & 0b111111;
+        int8_t a_from = (a >> 6) & 0b111111;
+        int8_t b_from = (b >> 6) & 0b111111;
+        int8_t b_to = b & 0b111111;
+
+        score += (PIECE_VALUES[board.at(a_to)]) - (PIECE_VALUES[board.m_pieces[a_from]] / 10);
+        score -= (PIECE_VALUES[board.at(b_to)]) - (PIECE_VALUES[board.m_pieces[b_from]] / 10);
+
+        score += ((board.m_last_move_to == a_to) - (board.m_last_move_to == b_to)) * 1001;
+
+        return score > 0;
+    });
+
+    int bestScore = -std::numeric_limits<int>::max();
+    uint16_t bestMove = 0;
+    for (uint16_t move : moves)
+    {
+        uint64_t encodedMove = board.movePiece((move >> 6) & 0b111111, move & 0b111111, move >> 12);
+        auto moveValue = quiescence(board, -beta, -alpha, -color);
+        moveValue.first *= -1;
+        alpha = std::max(alpha, moveValue.first);
+        if (moveValue.first > bestScore)
+        {
+            bestScore = moveValue.first;
+            bestMove = move;
+        }
+        if (alpha >= beta)
+        {
+            board.undoMove(encodedMove);
+            break;
+        }
+        board.undoMove(encodedMove);
+    }
+
+    return std::make_pair(alpha, bestMove);
+}
+
+std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int alpha, int beta, int8_t color)
+{
+    static uint64_t tbUsed = 0;
+    static uint64_t positions = 0;
+
+    if (depth == 0)
+        return quiescence(board, alpha, beta, color) /*std::make_pair(color * evaluate(board), 0)*/;
+
+    int startAlpha = alpha;
+
+    uint64_t key = hash(board);
+    auto ttMoveIt = m_transpositionTable.find(key);
+    if (ttMoveIt != m_transpositionTable.end() && ttMoveIt->second.depth >= depth)
+    {
+        tbUsed += 1;
+        if (ttMoveIt->second.type == EXACT)
+            return std::make_pair(ttMoveIt->second.score, ttMoveIt->second.move);
+        else if (ttMoveIt->second.type == LOWERBOUND)
+            alpha = std::max(alpha, ttMoveIt->second.score);
+        else if (ttMoveIt->second.type == UPPERBOUND)
+            beta = std::min(beta, ttMoveIt->second.score);
+
+        if (alpha >= beta)
+            return std::make_pair(ttMoveIt->second.score, ttMoveIt->second.move);
+    }
 
     uint8_t player_to_move = board.player_to_move();
     std::vector<uint16_t> moves = board.get_moves(player_to_move);
     
     if (moves.size() == 0)
-        return std::make_pair(color * (board.isSquareAttacked(__builtin_ctzll(board.m_bitboards[player_to_move][KING]), !player_to_move) ? -9999999 : 0), 0);
+    {
+        if ((board.isSquareAttacked(__builtin_ctzll(board.m_bitboards[player_to_move][KING]), !player_to_move)))
+            return std::make_pair(color * (player_to_move == WHITE ? -32000 : 32000), 0);
+        else
+            return std::make_pair(0, 0);
+    }
 
-    std::sort(moves.begin(), moves.end(), [&board, player_to_move](uint16_t a, uint16_t b) {
+    std::sort(moves.begin(), moves.end(), [&board, player_to_move, &ttMoveIt, this, key](uint16_t a, uint16_t b) {
         int16_t score = 0;
         int8_t a_to = a & 0b111111;
         int8_t a_from = (a >> 6) & 0b111111;
@@ -147,13 +228,19 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
         score += PIECE_TABLES[board.m_pieces[a_from] - 1][a_square] - PIECE_TABLES[board.m_pieces[b_from] - 1][b_square];
 
         score += ((board.m_last_move_to == a_to) - (board.m_last_move_to == b_to)) * 1001;
+
+        if (ttMoveIt != this->m_transpositionTable.end() && ttMoveIt->second.move == a)
+            score += 50;
+        if (ttMoveIt != this->m_transpositionTable.end() && ttMoveIt->second.move == b)
+            score -= 50;
         return score > 0;
     });
 
     int bestScore = -std::numeric_limits<int>::max();
     uint16_t bestMove = 0;
-    for (uint16_t& move : moves)
+    for (uint16_t move : moves)
     {
+        positions++;
         uint64_t encodedMove = board.movePiece((move >> 6) & 0b111111, move & 0b111111, move >> 12);
         auto moveValue = negamax(board, depth - 1, -beta, -alpha, -color);
         moveValue.first *= -1;
@@ -170,16 +257,41 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
         }
         board.undoMove(encodedMove);
     }
+
+    TranspositionTableData ttData = { bestMove, depth, alpha, (bestScore <= startAlpha ? UPPERBOUND : (bestScore >= beta ? LOWERBOUND : EXACT)), 0 };
+    if (ttMoveIt == m_transpositionTable.end() || ttMoveIt->second.depth <= depth)
+        m_transpositionTable[key] = ttData;
+
+    if (depth == m_depth)
+    {
+        if (positions != 0)
+            std::cout << "Transposition table usage: " << (tbUsed / ((float)positions)) * 100 << "%" << std::endl;
+        tbUsed = 0;
+        positions = 0;
+    }
     return std::make_pair(alpha, bestMove);
 }
 
-uint16_t Computer::getBestMove(BitBoard& board) const
+uint16_t Computer::getBestMove(BitBoard& board)
 {
     uint16_t bookMove = m_openingBook.getMove(hash(board));
     if (bookMove != 0)
-    {
-        std::cout << "BOOK MOVE" << std::endl;
         return bookMove;
-    }
-    return negamax(board, m_depth, -std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), board.player_to_move() == WHITE ? 1 : -1).second;
+
+    using namespace std::chrono;
+    auto start = high_resolution_clock::now();
+    // if time between start and now is less than 4 seconds, we will use negamax
+
+    uint16_t ret = negamax(board, m_depth, -std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), board.player_to_move() == WHITE ? 1 : -1).second;
+    for (auto& entry : m_transpositionTable)
+        entry.second.age += 1;
+        
+    for (auto entry = m_transpositionTable.begin(); entry != m_transpositionTable.end();)
+        if (entry->second.age > 5)
+            entry = m_transpositionTable.erase(entry);
+        else
+            entry++;
+
+
+    return ret;
 }
