@@ -43,3 +43,6 @@ https://en.wikipedia.org/wiki/Negamax
 
 ## Zobrist hashing & Opening book
 http://hgm.nubati.net/book_format.html
+
+## Triangular Principal Variations Table
+https://www.chessprogramming.org/Triangular_PV-Table

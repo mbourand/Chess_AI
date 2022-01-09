@@ -5,3 +5,4 @@ callgrind*
 *.txt
 .vscode
 *.ilk
+*.o

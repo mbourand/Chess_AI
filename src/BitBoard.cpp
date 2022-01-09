@@ -883,9 +883,9 @@ bool BitBoard::isSquareAttacked(uint8_t square, uint8_t attacker_color) const
         return true;
     if (KING_MOVES[square] & m_bitboards[attacker_color][KING])
         return true;
-    if (get_bishop_moves(square, all_pieces) & m_bitboards[attacker_color][BISHOP])
+    if (get_bishop_moves(square, all_pieces) & (m_bitboards[attacker_color][BISHOP] | m_bitboards[attacker_color][QUEEN]))
         return true;
-    if (get_rook_moves(square, all_pieces) & m_bitboards[attacker_color][ROOK])
+    if (get_rook_moves(square, all_pieces) & (m_bitboards[attacker_color][ROOK] | m_bitboards[attacker_color][QUEEN]))
         return true;
     return false;
 }

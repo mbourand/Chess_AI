@@ -1,5 +1,8 @@
 #include "BitBoard.h"
 #include "Computer.h"
+#ifdef CHESS_GUI
+#include "BitBoardState.h"
+#endif
 
 int64_t perft_count(BitBoard& bitBoard, int depth)
 {
@@ -79,13 +82,18 @@ void evaluationTest()
 void computer_play()
 {
     srand(time(NULL));
-    BitBoard bitboard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    BitBoard bitboard("kr6/pp6/2b5/3q4/8/b6R/5PPP/5RK1 b - - 0 1");
+    using namespace std::chrono;
     Computer computer(6, "./komodo.bin");
+
 
     while (true)
     {
+        auto start = high_resolution_clock::now();
         uint16_t move = computer.getBestMove(bitboard);
-        std::cout << "Best move: " << move << std::endl;
+        auto end = high_resolution_clock::now();
+        auto duration = duration_cast<milliseconds>(end - start);
+        std::cout << "Move: " << move << " in " << duration.count() << " milliseconds" << std::endl;
         bitboard.movePiece(move >> 6, move & 0b111111, move >> 12);
         std::cout << bitboard;
         int from_x = 0;
@@ -162,6 +170,36 @@ void hashTest()
 
 int main()
 {
+
+#ifdef CHESS_GUI
+    sf::RenderWindow window(sf::VideoMode(800, 800), "Chess");
+    BitBoard bitboard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    Computer computer(6, "./komodo.bin");
+    BitBoardState state(window, bitboard, computer);
+    bool focused = true;
+    while (window.isOpen())
+    {
+        sf::Event event;
+        while (window.pollEvent(event))
+        {
+            if (event.type == sf::Event::Closed)
+                window.close();
+            if (event.type == sf::Event::GainedFocus)
+                focused = true;
+            if (event.type == sf::Event::LostFocus)
+                focused = false;
+        }
+        if (focused)
+        {
+            window.clear();
+            state.update();
+            state.render();
+            window.display();
+        }
+    }
+#else
     computer_play();
+#endif
+
     return 0;
 }

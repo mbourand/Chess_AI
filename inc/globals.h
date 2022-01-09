@@ -15,6 +15,13 @@
 #include <fstream>
 #include <ctime>
 #include <chrono>
+#include <memory>
+#include <cstring>
+
+#ifdef CHESS_GUI
+#include <SFML/Window.hpp>
+#include <SFML/Graphics.hpp>
+#endif
 
 uint64_t invert_bits(uint64_t bits);
 uint64_t invert_bytes(uint64_t bits);

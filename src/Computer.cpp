@@ -1,18 +1,48 @@
 #include "Computer.h"
 
+
+/* -------------------------------------------------------------------------- */
+/*                              Precomputed utils                             */
+/* -------------------------------------------------------------------------- */
+
+void precomputed_passed_pawns()
+{
+    for (int8_t square = 0; square < 64; square++)
+    {
+        uint64_t mask = 0;
+        int8_t file = square % 8;
+        int8_t rank = square / 8;
+        while (rank < 8)
+        {
+            mask |= (1ULL << (rank * 8 + file));
+            rank++;
+        }
+        mask ^= (1ULL << square);
+        // printBitboard(mask)
+        std::cout << mask << "ULL, ";
+        if (square % 8 == 7)
+            std::cout << std::endl;
+    }
+    std::cout << std::endl;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                               Computer class                               */
+/* -------------------------------------------------------------------------- */
+
 Computer::Computer()
 {
     m_depth = 6;
-    m_transpositionTableSize = 1000000000;
     m_timeToPlay = 1 * 1000;
+    m_killerMoves.resize(m_depth, {0, 0});
 }
 
 Computer::Computer(uint8_t depth, const std::string& openingBook)
 {
     m_depth = depth;
     m_openingBook = OpeningBook(openingBook);
-    m_transpositionTableSize = 1000000000;
     m_timeToPlay = 1 * 1000;
+    m_killerMoves.resize(m_depth, {0, 0});
 }
 
 Computer::Computer(const Computer& other)
@@ -25,8 +55,8 @@ Computer& Computer::operator=(const Computer& other)
     m_depth = other.m_depth;
     m_openingBook = other.m_openingBook;
     m_transpositionTable = other.m_transpositionTable;
-    m_transpositionTableSize = other.m_transpositionTableSize;
     m_timeToPlay = other.m_timeToPlay;
+    m_killerMoves = other.m_killerMoves;
     return *this;
 }
 
@@ -90,19 +120,20 @@ int Computer::evaluate(const BitBoard& board) const
 {
     int score = 0;
 
+    bool endgame = (board.m_bitboards[WHITE][QUEEN] | board.m_bitboards[BLACK][QUEEN]) == 0 
+            && countBits(board.m_bitboards[WHITE][ALL] & ~(board.m_bitboards[WHITE][PAWN])) <= 2
+            && countBits(board.m_bitboards[BLACK][ALL] & ~(board.m_bitboards[BLACK][PAWN])) <= 2;
+
     // Piece squares & Material advantage
     for (uint8_t i = 0; i < 64; i++)
     {
+        if (board.m_pieces[i] == KING && endgame)
+            continue;
         if (board.m_bitboards[WHITE][0] & (1ULL << i))
             score += PIECE_TABLES[board.m_pieces[i] - 1][i] + PIECE_VALUES[board.m_pieces[i]];
         else if (board.m_bitboards[BLACK][0] & (1ULL << i))
             score -= PIECE_TABLES[board.m_pieces[i] - 1][(7 - i / 8) * 8 + (i % 8)] + PIECE_VALUES[board.m_pieces[i]];
     }
-
-    // Remove king table if during finals
-    uint8_t bk_square = __builtin_ctzll(board.m_bitboards[BLACK][KING]);
-    if ((board.m_bitboards[WHITE][QUEEN] | board.m_bitboards[BLACK][QUEEN]) == 0 && countBits(board.m_bitboards[!WHITE][ALL] & ~(board.m_bitboards[WHITE][PAWN]) <= 2) && countBits(board.m_bitboards[!BLACK][ALL] & ~(board.m_bitboards[BLACK][PAWN]) <= 2))
-        score += -PIECE_TABLES[KING][__builtin_ctzll(board.m_bitboards[WHITE][KING])] + -PIECE_TABLES[KING][(7 - bk_square / 8) * 8 + (bk_square % 8)];
 
     // Doubled pawns
     for (uint8_t i = 0; i < 8; i++)
@@ -118,14 +149,28 @@ int Computer::evaluate(const BitBoard& board) const
             score -= ISOLATED_PAWN_VALUE;
     }
 
+    // Passed pawns
+    /*uint64_t w_pawns = board.m_bitboards[WHITE][PAWN];
+    while (w_pawns)
+    {
+        uint8_t square = __builtin_ctzll(w_pawns);
+        uint8_t file = (square % 8);
+        w_pawns &= ~(1ULL << square);
+        uint64_t adjacent_mask = FILES[file] | (file == 0 ? 0 : FILES[file - 1]) | (file == 7 ? 0 : FILES[file + 1]);
+        if (!(board.m_bitboards[BLACK][PAWN] & adjacent_mask))
+            score += PASSED_PAWN_VALUE;
+        if (endgame && (ROOK_BEHIND_PAWN_MASKS[square] & board.m_bitboards[WHITE][ROOK]))
+            score += ROOK_BEHIND_PASSED_PAWN_VALUE;
+    }*/
+
     return score;
 }
 
-std::pair<int, uint16_t> Computer::quiescence(BitBoard& board, int alpha, int beta, int8_t color)
+int Computer::quiescence(BitBoard& board, int alpha, int beta, int8_t color)
 {
     int stand_pat = color * evaluate(board);
     if (stand_pat >= beta)
-        return std::make_pair(beta, 0);
+        return beta;
     if (stand_pat >= alpha)
         alpha = stand_pat;
 
@@ -133,7 +178,7 @@ std::pair<int, uint16_t> Computer::quiescence(BitBoard& board, int alpha, int be
     std::vector<uint16_t> moves = board.get_capture_moves(player_to_move);
     
     if (moves.size() == 0)
-        return std::make_pair(color * evaluate(board), 0);
+        return color * evaluate(board);
 
     std::sort(moves.begin(), moves.end(), [&board, player_to_move, this](uint16_t a, uint16_t b) {
         int16_t score = 0;
@@ -151,18 +196,13 @@ std::pair<int, uint16_t> Computer::quiescence(BitBoard& board, int alpha, int be
     });
 
     int bestScore = -std::numeric_limits<int>::max();
-    uint16_t bestMove = 0;
     for (uint16_t move : moves)
     {
         uint64_t encodedMove = board.movePiece((move >> 6) & 0b111111, move & 0b111111, move >> 12);
-        auto moveValue = quiescence(board, -beta, -alpha, -color);
-        moveValue.first *= -1;
-        alpha = std::max(alpha, moveValue.first);
-        if (moveValue.first > bestScore)
-        {
-            bestScore = moveValue.first;
-            bestMove = move;
-        }
+        int moveValue = -quiescence(board, -beta, -alpha, -color);
+        alpha = std::max(alpha, moveValue);
+        if (moveValue > bestScore)
+            bestScore = moveValue;
         if (alpha >= beta)
         {
             board.undoMove(encodedMove);
@@ -171,7 +211,7 @@ std::pair<int, uint16_t> Computer::quiescence(BitBoard& board, int alpha, int be
         board.undoMove(encodedMove);
     }
 
-    return std::make_pair(alpha, bestMove);
+    return alpha;
 }
 
 std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int alpha, int beta, int8_t color)
@@ -180,7 +220,7 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
     static uint64_t positions = 0;
 
     if (depth == 0)
-        return quiescence(board, alpha, beta, color) /*std::make_pair(color * evaluate(board), 0)*/;
+        return std::make_pair(quiescence(board, alpha, beta, color), 0);
 
     int startAlpha = alpha;
 
@@ -211,7 +251,7 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
             return std::make_pair(0, 0);
     }
 
-    std::sort(moves.begin(), moves.end(), [&board, player_to_move, &ttMoveIt, this, key](uint16_t a, uint16_t b) {
+    std::sort(moves.begin(), moves.end(), [&board, player_to_move, &ttMoveIt, this, key, depth](uint16_t a, uint16_t b) {
         int16_t score = 0;
         int8_t a_to = a & 0b111111;
         int8_t a_from = (a >> 6) & 0b111111;
@@ -233,6 +273,8 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
             score += 50;
         if (ttMoveIt != this->m_transpositionTable.end() && ttMoveIt->second.move == b)
             score -= 50;
+
+        score += ((m_killerMoves[depth - 1][0] == a || m_killerMoves[depth - 1][0] == a) - (m_killerMoves[depth - 1][0] == b || m_killerMoves[depth - 1][0] == b)) * 40;
         return score > 0;
     });
 
@@ -244,7 +286,8 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
         uint64_t encodedMove = board.movePiece((move >> 6) & 0b111111, move & 0b111111, move >> 12);
         auto moveValue = negamax(board, depth - 1, -beta, -alpha, -color);
         moveValue.first *= -1;
-        alpha = std::max(alpha, moveValue.first);
+        if (moveValue.first > alpha)
+            alpha = moveValue.first;
         if (moveValue.first > bestScore)
         {
             bestScore = moveValue.first;
@@ -252,6 +295,11 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
         }
         if (alpha >= beta)
         {
+            if (!board.isCapture(move))
+            {
+                m_killerMoves[depth - 1][1] = m_killerMoves[depth - 1][0];
+                m_killerMoves[depth - 1][0] = move;
+            }
             board.undoMove(encodedMove);
             break;
         }
@@ -269,6 +317,7 @@ std::pair<int, uint16_t> Computer::negamax(BitBoard& board, uint8_t depth, int a
         tbUsed = 0;
         positions = 0;
     }
+
     return std::make_pair(alpha, bestMove);
 }
 
@@ -278,10 +327,7 @@ uint16_t Computer::getBestMove(BitBoard& board)
     if (bookMove != 0)
         return bookMove;
 
-    using namespace std::chrono;
-    auto start = high_resolution_clock::now();
-    // if time between start and now is less than 4 seconds, we will use negamax
-
+    m_killerMoves.resize(m_depth, {0, 0});
     uint16_t ret = negamax(board, m_depth, -std::numeric_limits<int>::max(), std::numeric_limits<int>::max(), board.player_to_move() == WHITE ? 1 : -1).second;
     for (auto& entry : m_transpositionTable)
         entry.second.age += 1;
@@ -292,6 +338,6 @@ uint16_t Computer::getBestMove(BitBoard& board)
         else
             entry++;
 
-
+    m_killerMoves.clear();
     return ret;
 }

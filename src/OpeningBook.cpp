@@ -66,10 +66,7 @@ uint16_t OpeningBook::getMove(uint64_t key) const
 {
     auto it = book.find(key);
     if (it == book.end())
-    {
-        std::cout << "KEY NOT FOUND" << std::endl;
         return 0;
-    }
     auto& moves = it->second;
     return moves[rand() % moves.size()].move;
 }
